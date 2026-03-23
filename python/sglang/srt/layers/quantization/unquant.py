@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, List, Optional
 
 import torch
@@ -62,6 +63,8 @@ try:
     from flashinfer.fused_moe.core import ActivationType
 except ImportError:
     flashinfer_cutlass_fused_moe = None
+
+logger = logging.getLogger(__name__)
 
 
 class UnquantizedEmbeddingMethod(QuantizeMethodBase):
@@ -317,9 +320,26 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
             for weight_name in ["w13_weight", "w2_weight"]:
                 weight = getattr(layer, weight_name)
                 weight.data = weight.data.transpose(1, 2)
-                weight.data = npu_format_cast(
-                    weight.data,
-                )
+                k, n = weight.data.shape[-2], weight.data.shape[-1]
+                if weight.dtype in (torch.bfloat16, torch.float16):
+                    nz_aligned = k % 16 == 0 and n % 16 == 0
+                elif weight.dtype == torch.int8:
+                    nz_aligned = k % 16 == 0 and n % 32 == 0
+                else:
+                    nz_aligned = True
+                if nz_aligned:
+                    weight.data = npu_format_cast(weight.data)
+                else:
+                    logger.warning(
+                        "Skipping FRACTAL_NZ format for %s: shape (%d, %d) "
+                        "is not aligned (BF16/FP16 require dims divisible by "
+                        "16). Falling back to ND format, which may reduce NPU "
+                        "performance. Consider adjusting tp_size so expert "
+                        "dimensions are divisible by 16.",
+                        weight_name,
+                        k,
+                        n,
+                    )
 
         return
 
