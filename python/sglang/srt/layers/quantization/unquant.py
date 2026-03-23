@@ -331,14 +331,14 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, MultiPlatformOp):
                     weight.data = npu_format_cast(weight.data)
                 else:
                     logger.warning(
-                        "Skipping FRACTAL_NZ format for %s: shape (%d, %d) "
-                        "is not aligned (BF16/FP16 require dims divisible by "
-                        "16). Falling back to ND format, which may reduce NPU "
-                        "performance. Consider adjusting tp_size so expert "
-                        "dimensions are divisible by 16.",
+                        "Skipping FRACTAL_NZ format for %s: shape (%d, %d) is not aligned for "
+                        "dtype %s. Falling back to ND format, which may reduce NPU "
+                        "performance. Consider adjusting model parameters or tp_size so expert "
+                        "dimensions are aligned with NPU requirements.",
                         weight_name,
                         k,
                         n,
+                        weight.dtype,
                     )
 
         return
