@@ -160,7 +160,7 @@ def npu_format_cast(
 
     if acl_format == NPUACLFormat.ACL_FORMAT_FRACTAL_NZ and not _is_nz_aligned(tensor):
         k, n = tensor.shape[-2], tensor.shape[-1]
-        logger.warning(
+        logger.warning_once(
             "Skipping FRACTAL_NZ format cast: tensor shape (%d, %d) dtype %s "
             "is not aligned to NZ requirements. Falling back to 'ND' format, "
             "which may reduce NPU performance.",
