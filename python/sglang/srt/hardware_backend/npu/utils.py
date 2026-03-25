@@ -162,7 +162,7 @@ def npu_format_cast(
         k, n = tensor.shape[-2], tensor.shape[-1]
         logger.warning(
             "Skipping FRACTAL_NZ format cast: tensor shape (%d, %d) dtype %s "
-            "is not aligned to NZ requirements. Falling back to ND format, "
+            "is not aligned to NZ requirements. Falling back to 'ND' format, "
             "which may reduce NPU performance.",
             k,
             n,

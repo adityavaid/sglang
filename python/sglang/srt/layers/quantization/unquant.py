@@ -63,6 +63,7 @@ try:
 except ImportError:
     flashinfer_cutlass_fused_moe = None
 
+
 class UnquantizedEmbeddingMethod(QuantizeMethodBase):
     """Unquantized method for embeddings."""
 
