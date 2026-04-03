@@ -232,6 +232,13 @@ class OpenAIServingTranscription(OpenAIServingBase):
             return self.create_error_response(str(e))
 
         text = ret.get("text", "")
+<<<<<<< HEAD
+=======
+        logger.info(f"[transcription] raw model output: {repr(text)}")
+        if self._model_family == "qwen3_asr":
+            text = _postprocess_qwen3_asr(text)
+            logger.info(f"[transcription] after postprocessing: {repr(text)}")
+>>>>>>> 4e3a49868 (update)
         usage = TranscriptionUsage(seconds=int(math.ceil(request.audio_duration_s)))
 
         # Build response based on format
