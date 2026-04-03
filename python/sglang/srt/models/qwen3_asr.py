@@ -127,12 +127,18 @@ class Qwen3ASRForConditionalGeneration(nn.Module):
         return hidden_states
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
-        stacked_params_mapping = [
+        llm_stacked_params = [
             ("qkv_proj", "q_proj", "q"),
             ("qkv_proj", "k_proj", "k"),
             ("qkv_proj", "v_proj", "v"),
             ("gate_up_proj", "gate_proj", 0),
             ("gate_up_proj", "up_proj", 1),
+        ]
+        # Audio tower has separate q/k/v in checkpoint → stack into qkv_proj
+        audio_stacked_params = [
+            ("qkv_proj", "q_proj", "q"),
+            ("qkv_proj", "k_proj", "k"),
+            ("qkv_proj", "v_proj", "v"),
         ]
         params_dict = dict(self.named_parameters(remove_duplicate=False))
 
@@ -143,7 +149,9 @@ class Qwen3ASRForConditionalGeneration(nn.Module):
                 continue
 
             if (
-                self.config.thinker_config.text_config.tie_word_embeddings
+                getattr(
+                    self.config.thinker_config.text_config, "tie_word_embeddings", False
+                )
                 and "lm_head.weight" in name
             ):
                 continue
@@ -151,18 +159,23 @@ class Qwen3ASRForConditionalGeneration(nn.Module):
             if "talker" in name or "code2wav" in name:
                 continue
 
-            name = name.replace("thinker.lm_head.", "language_model.lm_head.")
-            name = name.replace("thinker.model.", "language_model.model.")
+            if name.startswith("thinker.audio_tower."):
+                name = name.replace("thinker.audio_tower.", "audio_tower.", 1)
+            elif name.startswith("thinker.lm_head."):
+                name = name.replace("thinker.lm_head.", "language_model.lm_head.", 1)
+            elif name.startswith("thinker.model."):
+                name = name.replace("thinker.model.", "language_model.model.", 1)
 
-            is_audio = False
-            if "audio_tower" in name:
-                is_audio = True
-                name = name.replace("thinker.audio_tower.", "audio_tower.")
-                name = name.replace("attn.qkv.", "attn.qkv_proj.")
-                name = name.replace("attn.out_proj.", "attn.proj.")
+            is_audio = "audio_tower" in name
 
-            for param_name, weight_name, shard_id in stacked_params_mapping:
-                if weight_name not in name or is_audio:
+            # Audio tower: remap out_proj → proj for VisionAttention
+            if is_audio and "out_proj" in name:
+                name = name.replace("out_proj", "proj")
+
+            stacked_params = audio_stacked_params if is_audio else llm_stacked_params
+
+            for param_name, weight_name, shard_id in stacked_params:
+                if weight_name not in name:
                     continue
                 name_tmp = name.replace(weight_name, param_name)
                 if name_tmp.endswith(".bias") and name_tmp not in params_dict:
