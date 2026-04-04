@@ -366,6 +366,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
         yield "data: [DONE]\n\n"
 
 
+# TODO (adityavaid): refactor model-specific postprocessing into a plugin/adapter mechanism.
 def _postprocess_qwen3_asr(text: str) -> str:
     if not text:
         return ""
