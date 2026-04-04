@@ -164,8 +164,4 @@ class Qwen3ASRProcessor(ProcessorMixin):
 
 AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
 AutoConfig.register("qwen3_asr_thinker", Qwen3ASRThinkerConfig)
-
-
-@register_customized_processor(Qwen3ASRProcessor)
-class _Qwen3ASRConfigForProcessorRegistration(Qwen3ASRConfig):
-    model_type = "qwen3_asr"
+register_customized_processor(Qwen3ASRProcessor)(Qwen3ASRConfig)
