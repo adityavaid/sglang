@@ -199,6 +199,7 @@ class ModelConfig:
         self.is_audio_understandable_model = enable_multimodal and (
             hasattr(self.hf_config, "audio_config")
             or hasattr(getattr(self.hf_config, "thinker_config", None), "audio_config")
+            or is_audio_model(self.hf_config.architectures)
         )
 
         self.is_multimodal_chunked_prefill_supported = (
