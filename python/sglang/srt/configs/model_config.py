@@ -201,7 +201,8 @@ class ModelConfig:
         #   - top-level audio_config: e.g. Qwen2Audio
         #   - thinker_config.audio_config: Qwen3-Omni, Qwen3-ASR (nested thinker arch)
         #   - is_audio_model(): Whisper, Qwen3-ASR (architecture-based fallback)\
-        # TODO: Handle this more robustly by standardizing the config structure in the future.
+        # TODO: Handle this more robustly by standardizing the config structure in the future
+        self.is_audio_understandable_model = enable_multimodal and (
             hasattr(self.hf_config, "audio_config")
             or hasattr(getattr(self.hf_config, "thinker_config", None), "audio_config")
             or is_audio_model(self.hf_config.architectures)
