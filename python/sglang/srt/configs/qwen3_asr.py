@@ -44,7 +44,12 @@ class Qwen3ASRThinkerConfig(PretrainedConfig):
 
             text_config = HFQwen3Config(**text_config)
         elif text_config is None:
-            text_config = PretrainedConfig()
+            raise ValueError(
+                "Qwen3ASRThinkerConfig requires a text_config dict with "
+                "model parameters (hidden_size, num_attention_heads, etc.). "
+                "Got None."
+            )
+
         self.text_config = text_config
 
         self.audio_token_id = audio_token_id
