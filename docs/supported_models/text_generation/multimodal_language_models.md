@@ -53,6 +53,7 @@ in the GitHub search bar.
 | **Step3-VL** (10B) | `stepfun-ai/Step3-VL-10B` | StepFun's lightweight open-source 10B parameter VLM for multimodal intelligence, excelling in visual perception, complex reasoning, and human alignment. |  |
 | **Qwen3-ASR** (0.6B, 1.7B) | `Qwen/Qwen3-ASR-1.7B` | Alibaba's automatic speech recognition models supporting 52 languages. Served via the `/v1/audio/transcriptions` endpoint. |  |
 | **Qwen3-Omni** | `Qwen/Qwen3-Omni-30B-A3B-Instruct` |  Alibaba's omni-modal MoE model. Currently supports the **Thinker** component (multimodal understanding for text, images, audio, and video), while the **Talker** component (audio generation) is not yet supported. |  |
+| **LFM2-VL** | `LiquidAI/LFM2.5-VL-1.6B` | Liquid AI's vision-language model combining a SigLip2 vision encoder (NaFlex variable-resolution) with the LFM2 hybrid attention + short convolution language model. Supports multi-image inputs. |  |
 
 ## Audio Transcription
 
