@@ -129,9 +129,12 @@ class MlxTpModelWorker(TpModelWorker):
         next_token_ids_list = []
 
         if forward_mode.is_extend():
+<<<<<<< HEAD
             # Ensure pool is up-to-date before PoolBackedCache reads it
             # for prefix-cached prefills.  Only runs on extend batches.
             self._mlx_runner.flush_all_decode_kv()
+=======
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
             input_ids_cpu = model_worker_batch.input_ids.cpu().tolist()
             out_cache_loc_cpu = model_worker_batch.out_cache_loc.cpu().tolist()
             extend_seq_lens = model_worker_batch.extend_seq_lens

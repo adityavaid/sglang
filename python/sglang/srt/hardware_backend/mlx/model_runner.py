@@ -146,23 +146,41 @@ class MlxModelRunner:
             return explicit_size
         n_kv_heads, head_dim, dtype = self._get_attn_config()
         num_layers = self._num_layers
+<<<<<<< HEAD
         sys_available = psutil.virtual_memory().available
         mlx_limit = mx.device_info().get(
+=======
+        vm = psutil.virtual_memory()
+        metal_limit = mx.device_info().get(
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
             "max_recommended_working_set_size",
             mx.device_info().get("memory_size", 0),
         )
         mlx_used = mx.get_active_memory()
+<<<<<<< HEAD
         mlx_usable = int(mlx_limit * self._mem_fraction_static)
         kv_budget = min(
             max(mlx_usable - mlx_used, 0),
             int(sys_available * self._mem_fraction_static),
+=======
+        usable = min(int(vm.total * self._mem_fraction_static), metal_limit)
+        kv_budget = min(
+            max(usable - mlx_used, 0),
+            int(vm.available * self._mem_fraction_static),
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
         )
         bytes_per_slot = 2 * num_layers * n_kv_heads * head_dim * dtype.size
         pool_size = max(kv_budget // bytes_per_slot, 256)
         logger.info(
+<<<<<<< HEAD
             f"Auto-sized KV pool: "
             f"sys_available={sys_available / (1024**3):.2f} GB, "
             f"mlx_limit={mlx_limit / (1024**3):.1f} GB, "
+=======
+            f"Auto-sized KV pool: total_ram={vm.total / (1024**3):.1f} GB, "
+            f"sys_available={vm.available / (1024**3):.2f} GB, "
+            f"metal_limit={metal_limit / (1024**3):.1f} GB, "
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
             f"mlx_used={mlx_used / (1024**3):.2f} GB, "
             f"kv_budget={kv_budget / (1024**3):.2f} GB, "
             f"bytes_per_slot={bytes_per_slot}, pool_size={pool_size}"
@@ -312,7 +330,11 @@ class MlxModelRunner:
         cache_start: int,
         slot_ids: list[int],
     ) -> None:
+<<<<<<< HEAD
         """Sync KV from contiguous cache to pool at the given slot IDs."""
+=======
+        """Copy KV from contiguous cache to pool at the given slot IDs."""
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
         if not slot_ids or self._kv_pool is None:
             return
         num_layers = len(cache)
@@ -334,7 +356,11 @@ class MlxModelRunner:
         self._kv_pool.set_kv_all_layers(slot_ids_mx, k_all, v_all)
 
     def _sync_decode_kv_to_pool(self, req_id: str) -> None:
+<<<<<<< HEAD
         """Sync un-flushed decode KV for *req_id* to the shared pool."""
+=======
+        """Flush un-synced decode KV to pool before request removal."""
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
         if self._kv_pool is None or self._req_to_token_pool is None:
             return
         cache = self._req_caches.get(req_id)
@@ -356,6 +382,7 @@ class MlxModelRunner:
             .tolist()
         )
         self._sync_new_kv_to_pool(cache, synced_offset, slot_ids)
+<<<<<<< HEAD
         self._req_synced_offset[req_id] = current_offset
 
     def flush_all_decode_kv(self) -> None:
@@ -364,11 +391,14 @@ class MlxModelRunner:
             return
         for req_id in list(self._req_caches.keys()):
             self._sync_decode_kv_to_pool(req_id)
+=======
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
 
     def decode_batch(
         self,
         req_ids: list[str],
     ) -> list[int]:
+<<<<<<< HEAD
         """Decode one token per request."""
         batch_size = len(req_ids)
         num_layers = self._num_layers
@@ -413,6 +443,57 @@ class MlxModelRunner:
             finally:
                 clear_context()
 
+=======
+        """Decode one token per request.
+
+        Each request writes directly into its pre-allocated
+        ContiguousKVCache via slice-assignment (no merge/extract cycle).
+        Pool sync is deferred to remove_request().
+        """
+        batch_size = len(req_ids)
+        num_layers = self._num_layers
+
+        caches = [self._req_caches[rid] for rid in req_ids]
+        seq_lens = [caches[i][0].offset for i in range(batch_size)]
+
+        if batch_size == 1:
+            cache = caches[0]
+            last_token = self._req_token_ids[req_ids[0]][-1]
+            input_ids = mx.array([[last_token]], dtype=mx.int32)
+            model_output = self.model(input_ids, cache=cache)
+            logits = self._extract_logits(model_output)
+            next_tokens_mlx = mx.argmax(logits[:, -1, :], axis=-1)
+            self._eval_with_cache(next_tokens_mlx, cache)
+        else:
+            layer_caches = [
+                [caches[i][layer_idx] for i in range(batch_size)]
+                for layer_idx in range(num_layers)
+            ]
+            ctx = BatchedDecodeContext(
+                batch_size=batch_size,
+                seq_lens=seq_lens,
+                layer_caches=layer_caches,
+            )
+            set_context(ctx)
+            try:
+                max_offset = max(seq_lens)
+                shim_cache = [OffsetCache(offset=max_offset) for _ in range(num_layers)]
+                last_tokens = [self._req_token_ids[rid][-1] for rid in req_ids]
+                batched_input = mx.array(last_tokens, dtype=mx.int32)[:, None]
+                model_output = self.model(batched_input, cache=shim_cache)
+                logits = self._extract_logits(model_output)
+                next_tokens_mlx = mx.argmax(logits[:, -1, :], axis=-1)
+
+                eval_targets = [next_tokens_mlx]
+                for c_list in caches:
+                    for c in c_list:
+                        eval_targets.append(c.keys)
+                        eval_targets.append(c.values)
+                mx.eval(*eval_targets)
+            finally:
+                clear_context()
+
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
         next_tokens = next_tokens_mlx.tolist()
 
         for i, rid in enumerate(req_ids):
@@ -425,7 +506,15 @@ class MlxModelRunner:
         return req_id in self._req_caches
 
     def remove_request(self, req_id: str):
+<<<<<<< HEAD
         """Sync remaining decode KV to pool, then release request state."""
+=======
+        """Sync remaining decode KV to pool, then release request state.
+
+        Prefill KV is synced eagerly in prefill()/extend(); decode KV is
+        deferred here so that pool writes only happen once per request.
+        """
+>>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
         if not self.disable_radix_cache:
             self._sync_decode_kv_to_pool(req_id)
 
