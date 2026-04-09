@@ -118,23 +118,29 @@ class MlxTpModelWorker(TpModelWorker):
 
         # Auto-cleanup: remove MLX state for requests no longer in the batch.
         current_rids = {req.rid for req in reqs}
+        stale_rids = self._mlx_active_rids - current_rids
+        for rid in stale_rids:
+            self._mlx_runner.remove_request(rid)
         if forward_mode.is_decode():
-            stale_rids = self._mlx_active_rids - current_rids
-            for rid in stale_rids:
-                self._mlx_runner.remove_request(rid)
             self._mlx_active_rids = current_rids
         else:
-            self._mlx_active_rids |= current_rids
+            self._mlx_active_rids = (self._mlx_active_rids - stale_rids) | current_rids
 
         next_token_ids_list = []
 
         if forward_mode.is_extend():
+<<<<<<< HEAD
 <<<<<<< HEAD
             # Ensure pool is up-to-date before PoolBackedCache reads it
             # for prefix-cached prefills.  Only runs on extend batches.
             self._mlx_runner.flush_all_decode_kv()
 =======
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+            # Ensure pool is up-to-date before PoolBackedCache reads it
+            # for prefix-cached prefills.  Only runs on extend batches.
+            self._mlx_runner.flush_all_decode_kv()
+>>>>>>> 5e2ac7a67 (Address review comments)
             input_ids_cpu = model_worker_batch.input_ids.cpu().tolist()
             out_cache_loc_cpu = model_worker_batch.out_cache_loc.cpu().tolist()
             extend_seq_lens = model_worker_batch.extend_seq_lens

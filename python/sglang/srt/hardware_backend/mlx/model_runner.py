@@ -331,10 +331,14 @@ class MlxModelRunner:
         slot_ids: list[int],
     ) -> None:
 <<<<<<< HEAD
+<<<<<<< HEAD
         """Sync KV from contiguous cache to pool at the given slot IDs."""
 =======
         """Copy KV from contiguous cache to pool at the given slot IDs."""
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+        """Sync KV from contiguous cache to pool at the given slot IDs."""
+>>>>>>> 5e2ac7a67 (Address review comments)
         if not slot_ids or self._kv_pool is None:
             return
         num_layers = len(cache)
@@ -357,10 +361,14 @@ class MlxModelRunner:
 
     def _sync_decode_kv_to_pool(self, req_id: str) -> None:
 <<<<<<< HEAD
+<<<<<<< HEAD
         """Sync un-flushed decode KV for *req_id* to the shared pool."""
 =======
         """Flush un-synced decode KV to pool before request removal."""
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+        """Sync un-flushed decode KV for *req_id* to the shared pool."""
+>>>>>>> 5e2ac7a67 (Address review comments)
         if self._kv_pool is None or self._req_to_token_pool is None:
             return
         cache = self._req_caches.get(req_id)
@@ -383,6 +391,9 @@ class MlxModelRunner:
         )
         self._sync_new_kv_to_pool(cache, synced_offset, slot_ids)
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 5e2ac7a67 (Address review comments)
         self._req_synced_offset[req_id] = current_offset
 
     def flush_all_decode_kv(self) -> None:
@@ -391,13 +402,17 @@ class MlxModelRunner:
             return
         for req_id in list(self._req_caches.keys()):
             self._sync_decode_kv_to_pool(req_id)
+<<<<<<< HEAD
 =======
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+>>>>>>> 5e2ac7a67 (Address review comments)
 
     def decode_batch(
         self,
         req_ids: list[str],
     ) -> list[int]:
+<<<<<<< HEAD
 <<<<<<< HEAD
         """Decode one token per request."""
         batch_size = len(req_ids)
@@ -450,6 +465,9 @@ class MlxModelRunner:
         ContiguousKVCache via slice-assignment (no merge/extract cycle).
         Pool sync is deferred to remove_request().
         """
+=======
+        """Decode one token per request."""
+>>>>>>> 5e2ac7a67 (Address review comments)
         batch_size = len(req_ids)
         num_layers = self._num_layers
 
@@ -507,6 +525,7 @@ class MlxModelRunner:
 
     def remove_request(self, req_id: str):
 <<<<<<< HEAD
+<<<<<<< HEAD
         """Sync remaining decode KV to pool, then release request state."""
 =======
         """Sync remaining decode KV to pool, then release request state.
@@ -515,6 +534,9 @@ class MlxModelRunner:
         deferred here so that pool writes only happen once per request.
         """
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+        """Sync remaining decode KV to pool, then release request state."""
+>>>>>>> 5e2ac7a67 (Address review comments)
         if not self.disable_radix_cache:
             self._sync_decode_kv_to_pool(req_id)
 
