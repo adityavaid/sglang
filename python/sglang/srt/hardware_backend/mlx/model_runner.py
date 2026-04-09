@@ -147,16 +147,22 @@ class MlxModelRunner:
         n_kv_heads, head_dim, dtype = self._get_attn_config()
         num_layers = self._num_layers
 <<<<<<< HEAD
+<<<<<<< HEAD
         sys_available = psutil.virtual_memory().available
         mlx_limit = mx.device_info().get(
 =======
         vm = psutil.virtual_memory()
         metal_limit = mx.device_info().get(
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+        sys_available = psutil.virtual_memory().available
+        mlx_limit = mx.device_info().get(
+>>>>>>> 5e0e0139b (Refine _compute_pool_size())
             "max_recommended_working_set_size",
             mx.device_info().get("memory_size", 0),
         )
         mlx_used = mx.get_active_memory()
+<<<<<<< HEAD
 <<<<<<< HEAD
         mlx_usable = int(mlx_limit * self._mem_fraction_static)
         kv_budget = min(
@@ -168,10 +174,17 @@ class MlxModelRunner:
             max(usable - mlx_used, 0),
             int(vm.available * self._mem_fraction_static),
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+        mlx_usable = int(mlx_limit * self._mem_fraction_static)
+        kv_budget = min(
+            max(mlx_usable - mlx_used, 0),
+            int(sys_available * self._mem_fraction_static),
+>>>>>>> 5e0e0139b (Refine _compute_pool_size())
         )
         bytes_per_slot = 2 * num_layers * n_kv_heads * head_dim * dtype.size
         pool_size = max(kv_budget // bytes_per_slot, 256)
         logger.info(
+<<<<<<< HEAD
 <<<<<<< HEAD
             f"Auto-sized KV pool: "
             f"sys_available={sys_available / (1024**3):.2f} GB, "
@@ -181,6 +194,11 @@ class MlxModelRunner:
             f"sys_available={vm.available / (1024**3):.2f} GB, "
             f"metal_limit={metal_limit / (1024**3):.1f} GB, "
 >>>>>>> 4a8a2f7a0 ([MLX] Support radix cache)
+=======
+            f"Auto-sized KV pool: "
+            f"sys_available={sys_available / (1024**3):.2f} GB, "
+            f"mlx_limit={mlx_limit / (1024**3):.1f} GB, "
+>>>>>>> 5e0e0139b (Refine _compute_pool_size())
             f"mlx_used={mlx_used / (1024**3):.2f} GB, "
             f"kv_budget={kv_budget / (1024**3):.2f} GB, "
             f"bytes_per_slot={bytes_per_slot}, pool_size={pool_size}"
