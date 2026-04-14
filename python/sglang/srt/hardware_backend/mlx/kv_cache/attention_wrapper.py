@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
+
+logger = logging.getLogger(__name__)
 
 from sglang.srt.hardware_backend.mlx.kv_cache.contiguous_cache import ContiguousKVCache
 
@@ -22,6 +25,9 @@ class BatchedDecodeContext:
     seq_lens: list[int]  # per-request token count before the new token
     # layer_caches[layer_idx][req_idx] = ContiguousKVCache
     layer_caches: list[list[ContiguousKVCache]]
+    # Custom RoPE kernel support (set by model_runner when available)
+    cos_sin_cache: Optional[mx.array] = None
+    rope_config: dict = field(default_factory=dict)
 
 
 def set_context(ctx: Optional[BatchedDecodeContext]) -> None:
@@ -41,6 +47,10 @@ class MLXAttentionWrapper(nn.Module):
 
     When ``BatchedDecodeContext`` is set, performs per-request RoPE,
     cache writes, and batched SDPA.  Otherwise delegates to inner module.
+
+    If the context includes a precomputed ``cos_sin_cache``, the wrapper
+    uses the custom Metal RoPE kernel (single dispatch for Q+K) instead
+    of two separate ``mx.fast.rope`` calls.
     """
 
     def __init__(self, inner: nn.Module, layer_idx: int):
@@ -77,10 +87,20 @@ class MLXAttentionWrapper(nn.Module):
         keys = keys.transpose(0, 2, 1, 3)
         values = values.transpose(0, 2, 1, 3)
 
-        # Vectorized RoPE with per-batch offsets
         offsets = mx.array(ctx.seq_lens, dtype=mx.int32)
-        queries = inner.rope(queries, offset=offsets)
-        keys = inner.rope(keys, offset=offsets)
+
+        if ctx.cos_sin_cache is not None:
+            queries, keys = self._rope_custom(
+                queries, keys, offsets, ctx.cos_sin_cache, ctx.rope_config
+            )
+            if self._layer_idx == 0:
+                logger.debug(
+                    f"Custom Metal RoPE kernel used (BS={B}, "
+                    f"positions={ctx.seq_lens})"
+                )
+        else:
+            queries = inner.rope(queries, offset=offsets)
+            keys = inner.rope(keys, offset=offsets)
 
         layer_caches = ctx.layer_caches[layer_idx]
         max_len = max(ctx.seq_lens) + 1
@@ -136,3 +156,34 @@ class MLXAttentionWrapper(nn.Module):
 
         output = output.transpose(0, 2, 1, 3).reshape(B, 1, -1)
         return inner.o_proj(output)
+
+    @staticmethod
+    def _rope_custom(
+        queries: mx.array,
+        keys: mx.array,
+        positions: mx.array,
+        cos_sin_cache: mx.array,
+        rope_config: dict,
+    ) -> tuple[mx.array, mx.array]:
+        """Apply RoPE using the custom Metal kernel (single dispatch for Q+K).
+
+        Converts from attention layout (B, n_heads, 1, head_dim) to kernel
+        layout (B, n_heads, head_dim) and back.
+        """
+        from sglang.srt.hardware_backend.mlx.kernels.rope import rope_neox
+
+        # (B, n_heads, 1, head_dim) → (B, n_heads, head_dim)
+        q_flat = queries[:, :, 0, :]
+        k_flat = keys[:, :, 0, :]
+
+        q_rot, k_rot = rope_neox(
+            q_flat,
+            k_flat,
+            cos_sin_cache,
+            positions,
+            **rope_config,
+        )
+
+        # (B, n_heads, head_dim) → (B, n_heads, 1, head_dim)
+        return q_rot[:, :, None, :], k_rot[:, :, None, :]
+

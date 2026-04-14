@@ -74,6 +74,11 @@ class MlxModelRunner:
 
         self._pool_size = self._compute_pool_size(pool_size)
 
+        # Precompute cos/sin cache for custom Metal RoPE kernel
+        self._cos_sin_cache: mx.array | None = None
+        self._rope_config: dict = {}
+        self._init_rope_cache()
+
     @staticmethod
     def _extract_logits(model_output):
         """Extract logits from model output, handling both tuple and direct returns."""
@@ -139,6 +144,85 @@ class MlxModelRunner:
         if hasattr(sample_attn, "k_proj") and hasattr(sample_attn.k_proj, "weight"):
             dtype = sample_attn.k_proj.weight.dtype
         return n_kv_heads, head_dim, dtype
+
+    def _init_rope_cache(self) -> None:
+        """Extract RoPE config from the model and precompute cos/sin cache."""
+        import numpy as np
+
+        layer_list, attn_attr = find_attention_layers(self.model)
+        if not layer_list:
+            logger.warning("No attention layers found; skipping RoPE cache init")
+            return
+
+        sample_attn = getattr(layer_list[0], attn_attr)
+        if isinstance(sample_attn, MLXAttentionWrapper):
+            sample_attn = sample_attn._inner
+
+        rope = getattr(sample_attn, "rope", None)
+        if rope is None:
+            logger.info("Model attention has no 'rope' attribute; using MLX built-in RoPE")
+            return
+
+        if getattr(rope, "traditional", False):
+            logger.info("Model uses traditional (GPT-J) RoPE; custom kernel only supports NeoX")
+            return
+
+        rope_dim = rope.dims
+        base = getattr(rope, "base", 10000.0)
+        n_kv_heads, head_dim, _ = self._get_attn_config()
+        n_heads = sample_attn.n_heads
+
+        max_pos = self._max_seq_len * 2
+        inv_freq = 1.0 / (
+            base ** (np.arange(0, rope_dim, 2, dtype=np.float32) / rope_dim)
+        )
+        t = np.arange(max_pos, dtype=np.float32)
+        freqs = np.outer(t, inv_freq)
+        cache = np.concatenate([np.cos(freqs), np.sin(freqs)], axis=-1)
+        self._cos_sin_cache = mx.array(cache)
+
+        self._rope_config = {
+            "head_dim": head_dim,
+            "rope_dim": rope_dim,
+            "num_qo_heads": n_heads,
+            "num_kv_heads": n_kv_heads,
+        }
+
+        logger.info(
+            f"Custom RoPE kernel enabled: rope_dim={rope_dim}, base={base}, "
+            f"n_heads={n_heads}, n_kv_heads={n_kv_heads}, head_dim={head_dim}, "
+            f"cache_size={max_pos}"
+        )
+
+    def _ensure_rope_cache_length(self, needed: int) -> None:
+        """Grow the cos/sin cache if positions exceed its current size."""
+        if self._cos_sin_cache is None:
+            return
+        cur_len = self._cos_sin_cache.shape[0]
+        if needed < cur_len:
+            return
+        import numpy as np
+
+        new_len = cur_len
+        while new_len <= needed:
+            new_len *= 2
+        rope_dim = self._rope_config["rope_dim"]
+        base = 10000.0
+        layer_list, attn_attr = find_attention_layers(self.model)
+        if layer_list:
+            sample_attn = getattr(layer_list[0], attn_attr)
+            if isinstance(sample_attn, MLXAttentionWrapper):
+                sample_attn = sample_attn._inner
+            rope = getattr(sample_attn, "rope", None)
+            if rope is not None:
+                base = getattr(rope, "base", 10000.0)
+        inv_freq = 1.0 / (
+            base ** (np.arange(0, rope_dim, 2, dtype=np.float32) / rope_dim)
+        )
+        t = np.arange(new_len, dtype=np.float32)
+        freqs = np.outer(t, inv_freq)
+        cache = np.concatenate([np.cos(freqs), np.sin(freqs)], axis=-1)
+        self._cos_sin_cache = mx.array(cache)
 
     def _compute_pool_size(self, explicit_size: int | None) -> int:
         """Determine pool slot count (auto-size from available memory if needed)."""
@@ -452,10 +536,17 @@ class MlxModelRunner:
                 [caches[i][layer_idx] for i in range(batch_size)]
                 for layer_idx in range(num_layers)
             ]
+            # Ensure cos_sin_cache covers all positions
+            if self._cos_sin_cache is not None:
+                max_pos = max(seq_lens) + 1
+                self._ensure_rope_cache_length(max_pos)
+
             ctx = BatchedDecodeContext(
                 batch_size=batch_size,
                 seq_lens=seq_lens,
                 layer_caches=layer_caches,
+                cos_sin_cache=self._cos_sin_cache,
+                rope_config=self._rope_config,
             )
             set_context(ctx)
             try:
@@ -575,3 +666,4 @@ class MlxModelRunner:
         self._req_synced_offset.clear()
         if self._kv_pool is not None:
             self._kv_pool.clear()
+
