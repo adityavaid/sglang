@@ -148,7 +148,11 @@ class _GreedyStep(torch.nn.Module):
 
     def forward(self, input_ids, start_position):
         logits = self.adapter(input_ids, start_position)
-        self.next_token.copy_(logits.argmax(dim=-1).to(torch.int32))
+        # coreai-core 1.0.0b2 emits an unused read_handle for write-only state;
+        # the macOS 27 MPS compiler crashes lowering it. Keep the read live
+        # with an exact integer delta update (token IDs are in int32 range).
+        token = logits.argmax(dim=-1).to(torch.int32)
+        self.next_token.add_(token - self.next_token)
         return ()
 
 

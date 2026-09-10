@@ -15,22 +15,29 @@ are rejected rather than silently ignored.
 
 ## Serving environment and preparation
 
-Use the existing SGLang/MLX environment with Python 3.11-3.13. These optional
-dependencies preserve Torch 2.13; **do not install `coreai-models`**, whose
-Torch 2.9 pin conflicts with this branch.
+Use Python 3.13 (tested with 3.13.15). Python 3.14 does not currently have the
+required Core AI wheels. This macOS profile installs the serving dependencies
+without SGLang's Linux/CUDA kernels; MLX is not required. **Do not install
+`coreai-models`**, whose Torch 2.9 pin conflicts with this branch.
+SGLang's package metadata still lists its general GPU/media dependencies,
+so pip may warn about those absent optional paths; this profile does not
+claim that `pip check` passes for the complete CUDA-oriented distribution.
 
 ```bash
-source /path/to/mlx-venv/bin/activate
-cd /path/to/sglang-core-ai
-export PYTHONPATH="$PWD/python"
-uv pip install --python "$VIRTUAL_ENV/bin/python" \
+cd /path/to/sglang
+# Only if the environment does not already exist:
+uv venv --python 3.13 --seed .venv-coreai
+.venv-coreai/bin/python -m pip install \
   -r experimental/coreai/requirements-serving.txt
+SGLANG_BUILD_RUST_EXTS=none .venv-coreai/bin/python -m pip install \
+  --no-deps -e python
 
 unset SGLANG_USE_CPU_ENGINE
-SGLANG_USE_COREAI=0 python -m sglang.srt.hardware_backend.coreai.prepare \
+SGLANG_USE_COREAI=0 SGLANG_USE_MLX=0 \
+.venv-coreai/bin/python -m sglang.srt.hardware_backend.coreai.prepare \
   --model Qwen/Qwen3-0.6B \
   --revision c1899de289a04d12100db370d81485cdf75e47ca \
-  --output-dir "$HOME/models/qwen3-0.6b-coreai" \
+  --output-dir artifacts/qwen3-coreai-serving-delta \
   --context-length 2048 --prefill-chunk-size 64
 ```
 
@@ -110,10 +117,10 @@ execution. CPU-reference results are **not** macOS 27 native GPU qualification.
 ## Launch on macOS 27
 
 ```bash
-BUNDLE="$HOME/models/qwen3-0.6b-coreai"
+BUNDLE=artifacts/qwen3-coreai-serving-delta
 unset SGLANG_USE_CPU_ENGINE
 SGLANG_USE_MLX=0 SGLANG_USE_COREAI=1 \
-python -m sglang.launch_server \
+.venv-coreai/bin/python -m sglang.launch_server \
   --model-path "$BUNDLE" \
   --coreai-artifact-path "$BUNDLE" \
   --served-model-name qwen3-coreai \
@@ -128,6 +135,11 @@ The separate Torch CPU engine flag is incompatible with Core AI; CPU
 bookkeeping does not mean Torch CPU model execution.
 
 ```bash
+curl --fail http://127.0.0.1:30000/health
+curl --fail http://127.0.0.1:30000/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-coreai","prompt":"The capital of France is","temperature":0,"max_tokens":16}'
+
 curl -N http://127.0.0.1:30000/v1/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"qwen3-coreai","prompt":"The capital of France is","temperature":0,"max_tokens":32,"stream":true}'
@@ -149,6 +161,32 @@ Both compiled functions write greedy argmax into an explicit persistent
 The host reads only this scalar after completion. This avoids requesting new
 Core AI output NDArrays on every decode call, rather than relying on a
 nonexistent Python `outputs=` API or periodically recycling workers.
+
+With `coreai-core==1.0.0b2` on the tested macOS 27 runtime, a write-only
+`next_token.copy_(token)` crashes native model loading in
+`ReadHandleOpPattern::matchAndRewrite`. The exporter uses the equivalent
+integer read-modify-write `next_token.add_(token - next_token)` to keep the
+handle read live. Old bundles must be rebuilt into a **new directory**;
+updating Python alone does not repair their compiled graph.
+
+Local verification on 2026-09-10: the rebuilt Qwen3-0.6B bundle reached
+SGLang readiness, `/health` returned 200, and `/v1/completions` returned
+"Paris. The capital of Italy is Rome...". Streaming chat reached `[DONE]`;
+repeating a prompt after another request reproduced its completion. The
+zero-output native probe also completed 1,000 state-checked iterations.
+Eight-token completions for short, chat-template, and 185-token prompts
+matched an independently loaded Transformers Qwen3-0.6B Torch reference.
+These are functional checks, not a production or sustained-memory claim.
+
+Run the native regression alongside the reference/unit tests explicitly:
+
+```bash
+SGLANG_TEST_COREAI_NATIVE=1 .venv-coreai/bin/python -m pytest -q \
+  test/registered/unit/hardware_backend/coreai experimental/coreai/tests
+```
+
+The opt-in test prepares a tiny native Qwen3, executes real Metal-backed
+prefill/decode, and compares multiple requests against a Torch test oracle.
 
 This is a candidate mitigation for the output-allocation ceiling reported in
 [apple/coreai-torch#75](https://github.com/apple/coreai-torch/issues/75), not

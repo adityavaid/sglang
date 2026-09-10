@@ -1,8 +1,10 @@
 """Standard-loaded native weights -> Core AI execution; CPU reference, not GPU."""
 
 import importlib.util
+import os
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +26,18 @@ class TestPrepareLoadedQwen3(unittest.TestCase):
         importlib.util.find_spec("coreai_torch"), "Core AI extra is not installed"
     )
     def test_real_export_prefill_decode_and_request_reuse(self):
+        self._check_export_and_execution(native=False)
+
+    @unittest.skipUnless(
+        os.environ.get("SGLANG_TEST_COREAI_NATIVE") == "1",
+        "Opt-in macOS 27 native Core AI test",
+    )
+    def test_native_export_prefill_decode_and_request_reuse(self):
+        # Exercise actual Metal-backed state: CPU reference tests cannot catch
+        # the MPS compiler crash caused by a write-only next_token handle.
+        self._check_export_and_execution(native=True)
+
+    def _check_export_and_execution(self, *, native):
         from coreai.runtime import AIModel, NDArray, SpecializationOptions
 
         from sglang.srt.hardware_backend.coreai.prepare import prepare_loaded_qwen3
@@ -52,8 +66,13 @@ class TestPrepareLoadedQwen3(unittest.TestCase):
             prepare_loaded_qwen3(
                 model, bundle, max_context_length=16, prefill_chunk_size=4
             )
-            with patch("sglang.srt.hardware_backend.coreai.session.validate_runtime"):
-                session = ReferenceSession(bundle)
+            runtime_check = (
+                nullcontext()
+                if native
+                else patch("sglang.srt.hardware_backend.coreai.session.validate_runtime")
+            )
+            with runtime_check:
+                session = (CoreAISession if native else ReferenceSession)(bundle)
             try:
                 for prompt in ([1], [1, 3, 5, 7, 2], [8, 3]):
                     session.reset()

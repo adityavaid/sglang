@@ -29,7 +29,9 @@ class _CounterStep(torch.nn.Module):
 
     def forward(self, x):
         self.counter.add_((x @ self.weight).sum())
-        self.next_token.copy_(self.counter.to(torch.int32))
+        # Keep the handle read live: write-only state crashes the macOS 27
+        # MPS compiler with coreai-core 1.0.0b2 (ReadHandleOpPattern).
+        self.next_token.add_(self.counter.to(torch.int32) - self.next_token)
         return tuple(self.counter + float(i) for i in range(self.output_count))
 
 
