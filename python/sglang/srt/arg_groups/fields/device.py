@@ -41,6 +41,10 @@ class Device:
         "The delta between consecutive GPU IDs that are used. For example, setting it to 2 will use GPU 0,2,4,...",
     ] = 1
     random_seed: A[Optional[int], "The random seed."] = None
+    coreai_artifact_path: A[
+        Optional[str],
+        "Experimental Core AI bundle directory; requires SGLANG_USE_COREAI=1 and must match --model-path.",
+    ] = None
     mlx_enable_sampling: A[
         bool,
         (

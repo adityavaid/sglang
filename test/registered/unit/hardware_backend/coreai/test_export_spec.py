@@ -1,6 +1,9 @@
 import unittest
 
 from sglang.srt.hardware_backend.coreai.export import CoreAIExportSpec
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
 
 class TestCoreAIExportSpec(unittest.TestCase):
@@ -31,3 +34,7 @@ class TestCoreAIExportSpec(unittest.TestCase):
             state_names=("cache",),
         )
         self.assertEqual(spec.entrypoint_name, "decode")
+
+
+if __name__ == "__main__":
+    unittest.main()

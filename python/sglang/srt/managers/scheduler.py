@@ -103,6 +103,7 @@ from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.dllm.mixin.scheduler import SchedulerDllmMixin
 from sglang.srt.environ import envs, exportable_env_vars
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
+from sglang.srt.hardware_backend.coreai.runtime import use_coreai
 from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
 from sglang.srt.layers.moe import initialize_moe_config
@@ -356,7 +357,7 @@ from sglang.srt.utils.weight_versions import (
 )
 from sglang.utils import TypeBasedDispatcher, get_exception_traceback
 
-if is_mps():
+if is_mps() and not use_coreai():
     CudaStreamContext = nullcontext
     from sglang.srt.hardware_backend.mlx.scheduler_mixin import SchedulerMlxOverlapMixin
 else:
@@ -1008,7 +1009,11 @@ class Scheduler(
         )
 
         # FIXME: move tp worker's init logic outside of the scheduler.
-        if use_mlx():
+        if use_coreai():
+            from sglang.srt.hardware_backend.coreai.tp_worker import CoreAITpModelWorker
+
+            self.tp_worker = CoreAITpModelWorker(**worker_kwargs)
+        elif use_mlx():
             from sglang.srt.hardware_backend.mlx.tp_worker import MlxTpModelWorker
 
             self.tp_worker = MlxTpModelWorker(**worker_kwargs)
@@ -1203,8 +1208,12 @@ class Scheduler(
         set_random_seed(self.random_seed)
 
         # Print debug info
-        self.startup_available_gpu_memory_gb = get_available_gpu_memory(
-            self.device, self.ps.gpu_id, empty_cache=False
+        self.startup_available_gpu_memory_gb = (
+            psutil.virtual_memory().available / (1 << 30)
+            if use_coreai()
+            else get_available_gpu_memory(
+                self.device, self.ps.gpu_id, empty_cache=False
+            )
         )
         if self.ps.tp_rank == 0:
             logger.info(
@@ -1824,6 +1833,8 @@ class Scheduler(
         return result_dict
 
     def release_host_resources(self) -> None:
+        if use_coreai():
+            self.tp_worker.close()
         # Release pinned host buffers in userspace on graceful shutdown; see
         # HostKVCache.destroy. Called from run_scheduler_process's finally.
         if self.hisparse_coordinator is not None:
