@@ -1,8 +1,8 @@
-"""Opt-in Core AI artifact preparation for Torch-authored models.
+"""Opt-in Torch export and experimental Core AI execution.
 
-This package deliberately prepares artifacts only.  It must not be selected as
-a serving backend until a Core AI worker owns persistent KV state and honours
-SGLang's scheduler/cache contracts.
+Serving modules and optional Core AI dependencies are imported only on demand.
+Generic exports below are not serving bundles; use ``prepare_loaded_qwen3``
+from ``coreai.prepare`` for the versioned Qwen3 serving contract.
 """
 
 from sglang.srt.hardware_backend.coreai.export import (

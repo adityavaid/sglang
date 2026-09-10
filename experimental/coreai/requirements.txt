@@ -1,4 +1,6 @@
-# Keep the POC isolated from SGLang's runtime dependencies.  Core AI requires
+# Legacy oracle only: coreai-models pins Torch 2.9.0. Do not install this into
+# the SGLang serving environment; use requirements-serving.txt there.
+# Keep the POC isolated from SGLang's runtime dependencies. Core AI requires
 # macOS 27+ for the accelerated system runtime.
 coreai-core==1.0.0b2
 coreai-torch==0.4.2
