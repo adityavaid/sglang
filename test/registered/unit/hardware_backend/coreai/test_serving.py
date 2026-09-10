@@ -389,9 +389,7 @@ class TestCoreAIResolutionPipeline(unittest.TestCase):
                     _resolve_platform()
 
     def test_worker_startup_uses_no_linux_cpu_kernels_or_torch_model(self):
-        from test.registered.unit.hardware_backend.coreai.test_tp_worker import (
-            RecordingSession,
-        )
+        from test_tp_worker import RecordingSession
 
         from sglang.srt.configs.model_config import ModelConfig
         from sglang.srt.distributed.parallel_state import (

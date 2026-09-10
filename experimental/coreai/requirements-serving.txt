@@ -1,5 +1,55 @@
-# Add to the existing SGLang/MLX environment; do not install coreai-models.
-torch==2.13.0
-transformers==5.12.1
+# macOS arm64 Qwen3 Core AI serving profile (Python 3.13).
+# Install SGLang separately with --no-deps: its default requirements include
+# Linux/CUDA kernels unavailable on macOS. Do not install coreai-models, which
+# pins a conflicting Torch version. MLX is not needed for this profile.
+aiohttp
+anthropic>=0.20.0
+apache-tvm-ffi==0.1.11
+blobfile==3.0.0
+compressed-tensors==0.18.0
 coreai-core==1.0.0b2
 coreai-torch==0.4.2
+datasets
+distro
+einops
+fastapi
+gguf
+interegular
+IPython
+llguidance>=1.7.6,<2.0.0
+modelscope
+msgspec
+numpy
+openai==2.6.1
+openai-harmony==0.0.4
+orjson
+outlines==0.1.11
+packaging
+partial_json_parser
+pillow
+prometheus-client>=0.20.0
+psutil
+pybase64
+pydantic
+pytest
+pytest-asyncio
+python-multipart
+pyzmq>=25.1.2
+requests
+scipy
+sentencepiece
+setproctitle
+soundfile==0.13.1
+tiktoken
+timm==1.0.16
+tokenizers==0.22.2
+torch==2.13.0
+torchvision==0.28.0
+tqdm
+transformers==5.12.1
+uvicorn
+uvloop
+watchfiles
+xgrammar==0.2.1
+xxhash
+zstandard
