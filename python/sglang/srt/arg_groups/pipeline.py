@@ -109,7 +109,7 @@ def run_resolution_pipeline(server_args: Any) -> None:
     )
 
     validate_prefill_cp_platform(server_args)
-    handle_hardware_runtime_validation()
+    handle_hardware_runtime_validation(server_args)
     if cfg.model_path.lower() in ["none", "dummy"]:
         return
 
@@ -220,7 +220,10 @@ def run_resolution_pipeline(server_args: Any) -> None:
         current_platform.apply_server_args_defaults,
     )
 
-    gpu_mem = get_device_memory_capacity(cfg.device)
+    from sglang.srt.hardware_backend.coreai.runtime import use_coreai
+
+    # Core AI's fixed-size artifact owns its memory. CPU NUMA sizing is Linux-only.
+    gpu_mem = None if use_coreai() else get_device_memory_capacity(cfg.device)
 
     # Handle memory-related, chunked prefill, and CUDA graph batch size configurations.
     from sglang.srt.arg_groups.memory_hook import handle_gpu_memory_settings

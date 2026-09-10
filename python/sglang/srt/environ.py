@@ -910,6 +910,7 @@ class Envs:
     # Apple Silicon and MLX
     # ===================================================================
     SGLANG_USE_MLX = EnvBool(False)
+    SGLANG_USE_COREAI = EnvBool(False)
     SGLANG_MLX_USE_CUSTOM_ROPE = EnvBool(False)
     SGLANG_MLX_FUSE_SWIGLU = EnvBool(False)
     # Number of decode steps between periodic mx.clear_cache() calls.

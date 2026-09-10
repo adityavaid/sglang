@@ -75,6 +75,13 @@ def _resolve_platform() -> SRTPlatform:
        SGLANG_PLATFORM matches against entry_point names.
     """
     selected = envs.SGLANG_PLATFORM.get()
+    from sglang.srt.hardware_backend.coreai.runtime import use_coreai, validate_runtime
+
+    if use_coreai():
+        if selected and selected != "coreai":
+            raise ValueError("Core AI conflicts with the selected SGLANG_PLATFORM.")
+        validate_runtime()
+        return CpuSRTPlatform()
 
     if selected:
         # Front-loading filter: only import and activate the specified plugin.

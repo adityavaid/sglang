@@ -782,6 +782,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         # Normalize the request
         obj.normalize_batch_and_arguments()
+        from sglang.srt.hardware_backend.coreai.runtime import use_coreai
+
+        if use_coreai():
+            from sglang.srt.hardware_backend.coreai.serving import (
+                validate_request_inputs,
+            )
+
+            validate_request_inputs(obj)
         self._set_default_priority(obj)
         if (
             isinstance(obj, GenerateReqInput)
@@ -1381,6 +1389,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         sampling_params = self.sampling_params_class(**sampling_kwargs)
         sampling_params.normalize(self.tokenizer)
         sampling_params.verify(self.model_config.vocab_size)
+        from sglang.srt.hardware_backend.coreai.runtime import use_coreai
+
+        if use_coreai():
+            from sglang.srt.hardware_backend.coreai.serving import validate_request
+
+            validate_request(
+                obj, sampling_params, input_embeds=input_embeds, mm_inputs=mm_inputs
+            )
 
         # Build return object
         if isinstance(obj, GenerateReqInput):
