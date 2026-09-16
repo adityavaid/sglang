@@ -7,14 +7,14 @@ import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
 
-def checkpoint_pair(**config_overrides):
+def checkpoint_pair(*, intermediate_size=48, **config_overrides):
     from sglang.srt.hardware_backend.coreai.prepare import load_native_qwen3
 
     torch.manual_seed(7)
     config = Qwen3Config(
         vocab_size=41,
         hidden_size=32,
-        intermediate_size=48,
+        intermediate_size=intermediate_size,
         num_hidden_layers=2,
         num_attention_heads=4,
         num_key_value_heads=2,

@@ -15,13 +15,19 @@ are rejected rather than silently ignored.
 
 ## Serving environment and preparation
 
-Use Python 3.13 (tested with 3.13.15). Python 3.14 does not currently have the
-required Core AI wheels. This macOS profile installs the serving dependencies
+Use Python 3.11-3.13 (local quantized authoring uses 3.11; upstream native
+serving used 3.13.15). Python 3.14 does not currently have the required Core AI
+wheels. This macOS profile installs the serving dependencies
 without SGLang's Linux/CUDA kernels; MLX is not required. **Do not install
 `coreai-models`**, whose Torch 2.9 pin conflicts with this branch.
 SGLang's package metadata still lists its general GPU/media dependencies,
 so pip may warn about those absent optional paths; this profile does not
 claim that `pip check` passes for the complete CUDA-oriented distribution.
+The dependencies pin Torch 2.11 for Apple's `coreai-opt` compressor. If downgrading
+an existing environment, align installed torchvision/torchaudio with Torch
+(0.26.0/2.11.0 respectively). TorchCodec 0.11.1 supports this combination;
+on Homebrew installations with `ffmpeg@7`, its imports may need
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/opt/ffmpeg@7/lib`.
 
 ```bash
 cd /path/to/sglang
@@ -38,7 +44,7 @@ SGLANG_USE_COREAI=0 SGLANG_USE_MLX=0 \
   --model Qwen/Qwen3-0.6B \
   --revision c1899de289a04d12100db370d81485cdf75e47ca \
   --output-dir artifacts/qwen3-coreai-serving-delta \
-  --context-length 2048 --prefill-chunk-size 64
+  --context-length 2048 --prefill-chunk-size 64 --forward-path native
 ```
 
 Preparation can run with the bundled authoring/reference runtime on macOS 26.
@@ -68,6 +74,7 @@ prepare_loaded_qwen3(
     tokenizer=loaded_tokenizer,
     max_context_length=2048,
     prefill_chunk_size=64,
+    forward_path="native",
     source_model="Qwen/Qwen3-0.6B",
     source_revision="c1899de289a04d12100db370d81485cdf75e47ca",
 )
@@ -77,6 +84,57 @@ The loaded model must already be on CPU in eval mode, using float16 or
 float32 weights. Float32 is available for conversion/reference work; the
 current SGLang serving profile requires float16. Preparation does not silently
 move, dequantize, or cast the loaded model.
+
+### Optional INT4 / INT8 weights
+
+Install the optional authoring dependencies and export a **new** bundle:
+
+```bash
+# Or activate an existing compatible SGLang/MLX environment.
+source .venv-coreai/bin/activate
+uv pip install --python "$VIRTUAL_ENV/bin/python" \
+  -r experimental/coreai/requirements-quantization.txt
+SGLANG_USE_MLX=0 SGLANG_USE_COREAI=0 \
+python -m sglang.srt.hardware_backend.coreai.prepare \
+  --model Qwen/Qwen3-0.6B \
+  --revision c1899de289a04d12100db370d81485cdf75e47ca \
+  --output-dir "$HOME/models/qwen3-0.6b-coreai-int4" \
+  --context-length 2048 --prefill-chunk-size 64 \
+  --forward-path native --weight-quantization int4
+```
+
+Use `int8` for the higher-precision alternative, or `none` (the default) to
+retain floating-point weights. The Python equivalent is
+`prepare_loaded_qwen3(..., forward_path="native", weight_quantization="int4")`.
+The optional requirements pin `coreai-opt==0.2.1` and `torchao==0.17.0`;
+do not mix them with SGLang extras requiring an incompatible torchao version.
+These are authoring dependencies, not a new runtime quantizer.
+
+Both export paths use Apple's eager **linear, clipped-symmetric, block-32
+weight-only** quantizer (axis 1). Each layer's packed QKV, attention output,
+packed gate/up and down projections are compressed. Embeddings, the LM head
+(including tied weights), biases, norms, activations and KV remain floating.
+This is not an MLX/GPTQ/AWQ checkpoint loader or an exact reproduction of
+Apple's catalog bundles. Input weights must still be ordinary CPU FP16/FP32
+SGLang parameters; nonfinite or block-incompatible projection weights fail
+explicitly.
+
+Compression operates on independent projection copies and binds their
+dequantization expressions during export using `torch.func.functional_call`.
+The caller's original parameters and tied embedding/head remain unchanged,
+including after a forward failure. Preparation therefore retains the original
+floating model; only the saved asset and the separate serving process benefit
+from compressed storage. The manifest records `weight_quantization` separately
+from the floating compute/KV `dtype`, plus compressor package provenance.
+
+Tiny-checkpoint coverage checks INT4/INT8 graph bit widths, smaller serialized
+assets (INT4 < INT8 < floating), quantized logits against floating logits, and
+actual Core AI reference prefill/decode with persistent KV and request reuse.
+It does **not** establish full-model quality or faster native decode. The
+current session still synchronously reads and resubmits each generated token;
+GPU-resident pipelined token feedback and macOS 27 GPU placement/performance
+qualification remain separate work. Launch the quantized bundle using the
+same serving command below, changing `BUNDLE` to its new path.
 
 ### Native loading and export boundary
 
@@ -97,22 +155,49 @@ It does not run server argument resolution or Linux CPU-engine kernels.
 Preparation is an offline operation, not safe to run concurrently with another
 runtime in the same process; incompatible distributed topologies are rejected.
 
-The export adapter retains native model/parameter identity and calls native
+There are two explicit preparation paths; neither silently falls back to the
+other. Both retain the loaded model and parameter objects:
+
+**`--forward-path native`** (`forward_path="native"` in Python) wraps the
+original `Qwen3ForCausalLM.forward`. The original decoder loop, layer forwards,
+packed projections, norms, RoPE, activation, and `LogitsProcessor` execute during
+export; no model source or decoder implementation is replaced. The wrapper
+constructs a minimal batch internally from tensor inputs. A scoped
+`ForwardContext` selects export-aware attention with registered, scatter-updated
+KV buffers and causal SDPA instead of serving pools. SGLang's existing
+`BaseFusedOp.enter_torch_compile`/`leave_torch_compile` hooks temporarily select
+compile-safe tensor implementations and restore each module's prior dispatch.
+Runtime configuration and owned process groups are also restored on failure.
+The resulting graph executes without a SGLang forward context or Python
+attention dispatch.
+
+This preserves the **model forward, not the entire serving runtime**: batch-one
+prefill/decode metadata is specialized, scheduler-only CPU summaries are unused,
+KV is contiguous, and logits are cast back to the model dtype before greedy
+selection. Direct eager/export use of `Qwen3NativeForward` requires its
+`export_context()` scope; the preparation API manages this automatically.
+
+**`--forward-path adapter`** (the unchanged default) retains the reference
+tensor decoder for comparison. The export adapter calls native
 RMSNorm, RoPE and activation tensor implementations. Dense packed projections
 use their tensor linear operation without distributed/kernel dispatch.
 Static causal SDPA with scatter-updated persistent KV replaces paged
 `RadixAttention`/`ForwardBatch` scheduling; a last-token LM-head projection
 replaces scheduler-dependent `LogitsProcessor`. The full scheduler-facing
-model `forward` is therefore **not** the export boundary. No global native
+model `forward` is therefore **not** this path's export boundary. No global native
 kernel dispatch is patched.
 
-This boundary supports only dense, unquantized, full-attention, default-RoPE
-Qwen3 with TP=PP=1. It specializes token length, not position. Both compiled
+Both paths accept only dense, unquantized, full-attention, default-RoPE
+Qwen3 with TP=PP=1; optional weight compression happens during preparation.
+Export specializes token length, not position. Both compiled
 entrypoints retain the same ABI: CPU int32 `input_ids[1,T]`,
 `start_position[1]`, mutable floating KV and int32 `next_token[1]`, no ordinary
 outputs. Tiny standard-loaded checkpoints are checked against independent
 Transformers test oracles, strict Torch export and actual Core AI CPU-reference
 execution. CPU-reference results are **not** macOS 27 native GPU qualification.
+The native path currently uses Torch SDPA lowered by Core AI, not a custom
+Metal attention kernel; kernel integration and speedups require separate
+on-device qualification.
 
 ## Launch on macOS 27
 
@@ -169,7 +254,8 @@ integer read-modify-write `next_token.add_(token - next_token)` to keep the
 handle read live. Old bundles must be rebuilt into a **new directory**;
 updating Python alone does not repair their compiled graph.
 
-Local verification on 2026-09-10: the rebuilt Qwen3-0.6B bundle reached
+Upstream PR verification on 2026-09-10 (macOS 27, Torch 2.13, unquantized
+adapter path): the rebuilt Qwen3-0.6B bundle reached
 SGLang readiness, `/health` returned 200, and `/v1/completions` returned
 "Paris. The capital of Italy is Rome...". Streaming chat reached `[DONE]`;
 repeating a prompt after another request reproduced its completion. The
@@ -223,9 +309,13 @@ Core AI execution, but do not qualify macOS 27 acceleration, Metal-backed
 state access, sustained native memory behavior, or performance against MLX:
 
 ```bash
-python -m pytest -q test/registered/unit/hardware_backend/coreai \
-  experimental/coreai/tests
+for test_file in test/registered/unit/hardware_backend/coreai/test_*.py; do
+  python -m pytest -q "$test_file" || exit
+done
+python -m pytest -q experimental/coreai/tests
 ```
+
+Run each backend test file in its own process to isolate runtime configuration.
 
 ## Original PR export oracle
 

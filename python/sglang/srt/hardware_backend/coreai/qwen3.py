@@ -113,8 +113,7 @@ class Qwen3TorchAdapter(nn.Module):
         for name in self.state_names:
             self.get_buffer(name).zero_()
 
-    @torch.no_grad()
-    def forward(
+    def _positions(
         self, input_ids: torch.Tensor, start_position: torch.Tensor
     ) -> torch.Tensor:
         if any(module.training for module in self.modules()):
@@ -139,9 +138,15 @@ class Qwen3TorchAdapter(nn.Module):
             ).all(),
             "start_position is outside context bounds",
         )
-        positions = start_position.to(torch.int64) + torch.arange(
+        return start_position.to(torch.int64) + torch.arange(
             input_ids.shape[1], device=input_ids.device
         )
+
+    @torch.no_grad()
+    def forward(
+        self, input_ids: torch.Tensor, start_position: torch.Tensor
+    ) -> torch.Tensor:
+        positions = self._positions(input_ids, start_position)
         layers = [
             (getattr(self, f"key_cache_{i}"), getattr(self, f"value_cache_{i}"))
             for i in range(self.num_layers)

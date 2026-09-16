@@ -6,8 +6,9 @@ import hashlib
 import importlib.metadata
 import os
 import tempfile
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
+from typing import Callable, Literal
 
 import torch
 from torch.export.graph_signature import InputKind
@@ -42,6 +43,9 @@ def _native_loading_scope(model_path, revision):
         )
     with temp_set_env(allow_sglang=True, SGLANG_USE_COREAI="0"):
         from sglang.srt.distributed import parallel_state as ps
+        from sglang.srt.model_executor.cuda_graph_config import (
+            default_cuda_graph_config,
+        )
         from sglang.srt.server_args import ServerArgs
 
         existing = torch.distributed.is_initialized()
@@ -71,6 +75,7 @@ def _native_loading_scope(model_path, revision):
                 trust_remote_code=False,
                 attention_backend="torch_native",
                 disable_cuda_graph=True,
+                cuda_graph_config=default_cuda_graph_config(),
             )
             # Loading needs configuration bags, not server resolution (which
             # probes Linux NUMA/CPU serving kernels even on macOS).
@@ -141,13 +146,29 @@ def load_native_qwen3(model_path: str | Path, *, revision: str | None = None):
 
 
 class _GreedyStep(torch.nn.Module):
-    def __init__(self, adapter):
+    def __init__(self, adapter, weight_quantization="none"):
         super().__init__()
         self.adapter = adapter
+        self.quantized_weights = None
+        if weight_quantization != "none":
+            from sglang.srt.hardware_backend.coreai.compression import (
+                Qwen3QuantizedWeights,
+            )
+
+            self.quantized_weights = Qwen3QuantizedWeights(
+                adapter.model, weight_quantization
+            )
         self.register_buffer("next_token", torch.zeros(1, dtype=torch.int32))
 
     def forward(self, input_ids, start_position):
-        logits = self.adapter(input_ids, start_position)
+        if self.quantized_weights is None:
+            logits = self.adapter(input_ids, start_position)
+        else:
+            logits = torch.func.functional_call(
+                self.adapter,
+                self.quantized_weights(),
+                (input_ids, start_position),
+            )
         # coreai-core 1.0.0b2 emits an unused read_handle for write-only state;
         # the macOS 27 MPS compiler crashes lowering it. Keep the read live
         # with an exact integer delta update (token IDs are in int32 range).
@@ -165,15 +186,25 @@ def prepare_loaded_qwen3(
     tokenizer=None,
     source_model: str | None = None,
     source_revision: str | None = None,
+    forward_path: Literal["adapter", "native"] = "adapter",
+    weight_quantization: Literal["none", "int4", "int8"] = "none",
 ) -> Path:
     """Export two whole-forward functions sharing loaded parameters and state.
 
     The caller retains its Torch model. The CLI exits after preparation so the
     serving process need not retain a second, eager weight representation.
+    ``native`` invokes the original serving forward with scoped export bindings;
+    ``adapter`` retains the reference tensor decoder path.
+    Optional ``int4``/``int8`` compresses projection copies with block-32
+    clipped-symmetric weights; embeddings, head, activations and KV stay floating.
     """
     output = Path(bundle_path).resolve()
     if output.exists():
         raise FileExistsError(f"Core AI bundle already exists: {output}")
+    if forward_path not in ("adapter", "native"):
+        raise ValueError("Core AI forward_path must be 'adapter' or 'native'.")
+    if weight_quantization not in ("none", "int4", "int8"):
+        raise ValueError("Core AI weight_quantization must be none, int4 or int8.")
     if (
         type(max_context_length) is not int
         or max_context_length <= 0
@@ -187,26 +218,36 @@ def prepare_loaded_qwen3(
 
     from sglang.srt.hardware_backend.coreai.qwen3 import Qwen3TorchAdapter
 
-    adapter = Qwen3TorchAdapter(model, max_context_length)
-    step = _GreedyStep(adapter).eval()
+    adapter: Qwen3TorchAdapter
+    export_context: Callable[[], AbstractContextManager[None]]
+    if forward_path == "native":
+        from sglang.srt.hardware_backend.coreai.native_forward import Qwen3NativeForward
+
+        adapter = Qwen3NativeForward(model, max_context_length)
+        export_context = adapter.export_context
+    else:
+        adapter = Qwen3TorchAdapter(model, max_context_length)
+        export_context = nullcontext
+    step = _GreedyStep(adapter, weight_quantization).eval()
     _, converter_type = _load_coreai_dependencies()
     converter = converter_type()
     targets = None
     state_specs: tuple[StateSpec, ...] = ()
     for name, length in (("decode", 1), ("prefill", prefill_chunk_size)):
         adapter.reset()
-        exported = _export_program(
-            step,
-            CoreAIExportSpec(
-                entrypoint_name=name,
-                input_names=("input_ids", "start_position"),
-                output_names=(),
-                example_args=(
-                    torch.zeros((1, length), dtype=torch.int32),
-                    torch.zeros(1, dtype=torch.int32),
+        with export_context():
+            exported = _export_program(
+                step,
+                CoreAIExportSpec(
+                    entrypoint_name=name,
+                    input_names=("input_ids", "start_position"),
+                    output_names=(),
+                    example_args=(
+                        torch.zeros((1, length), dtype=torch.int32),
+                        torch.zeros(1, dtype=torch.int32),
+                    ),
                 ),
-            ),
-        )
+            )
         mutated = set(exported.graph_signature.buffers_to_mutate.values())
         current_targets = tuple(
             spec.target
@@ -265,10 +306,21 @@ def prepare_loaded_qwen3(
                 states=state_specs,
                 packages={
                     name: importlib.metadata.version(name)
-                    for name in ("torch", "transformers", "coreai-core", "coreai-torch")
+                    for name in (
+                        "torch",
+                        "transformers",
+                        "coreai-core",
+                        "coreai-torch",
+                        *(
+                            ("coreai-opt", "torchao")
+                            if weight_quantization != "none"
+                            else ()
+                        ),
+                    )
                 },
                 source_model=source_model,
                 source_revision=source_revision,
+                weight_quantization=weight_quantization,
             ),
         )
         if output.exists():
@@ -284,6 +336,18 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--context-length", type=int, default=2048)
     parser.add_argument("--prefill-chunk-size", type=int, default=64)
+    parser.add_argument(
+        "--weight-quantization",
+        choices=("none", "int4", "int8"),
+        default="none",
+        help="Optional block-32 weight-only compression; embeddings/head stay floating",
+    )
+    parser.add_argument(
+        "--forward-path",
+        choices=("adapter", "native"),
+        default="adapter",
+        help="Export the reference tensor adapter or the original native serving forward",
+    )
     args = parser.parse_args()
     if args.output_dir.exists():
         parser.error("output directory already exists; choose a new bundle path")
@@ -301,6 +365,8 @@ def main():
         tokenizer=tokenizer,
         source_model=args.model,
         source_revision=getattr(model.config, "_commit_hash", None) or args.revision,
+        forward_path=args.forward_path,
+        weight_quantization=args.weight_quantization,
     )
     print(bundle)
 

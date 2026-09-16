@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
@@ -40,7 +41,7 @@ def write_bundle(path: Path):
     return document
 
 
-class TestCoreAIArtifact(unittest.TestCase):
+class TestCoreAIArtifact(CustomTestCase):
     def test_loads_the_serving_contract(self):
         from sglang.srt.hardware_backend.coreai.artifact import load_manifest
 
@@ -51,6 +52,27 @@ class TestCoreAIArtifact(unittest.TestCase):
             self.assertEqual(manifest.context_length, 16)
             self.assertEqual(manifest.states[0].shape, (1, 2, 16, 8))
             self.assertEqual(manifest.prefill_chunk_size, 4)
+            self.assertEqual(manifest.weight_quantization, "none")
+
+    def test_quantized_manifest_round_trip_preserves_compute_dtype(self):
+        from sglang.srt.hardware_backend.coreai.artifact import (
+            load_manifest,
+            save_manifest,
+        )
+
+        for mode in ("int4", "int8"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)
+                document = write_bundle(path)
+                document["weight_quantization"] = mode
+                document["packages"]["coreai-opt"] = "0.2.1"
+                (path / "coreai-manifest.json").write_text(json.dumps(document))
+                manifest = load_manifest(path)
+                save_manifest(path, manifest)
+                restored = load_manifest(path)
+                self.assertEqual(restored.weight_quantization, mode)
+                self.assertEqual(restored.dtype, "float32")
+                self.assertEqual(restored.states[0].dtype, "float32")
 
     def test_rejects_a_different_model_config(self):
         from sglang.srt.hardware_backend.coreai.artifact import load_manifest
@@ -73,6 +95,9 @@ class TestCoreAIArtifact(unittest.TestCase):
             {"prefill_chunk_size": 17},
             {"vocab_size": 0},
             {"dtype": "int4"},
+            {"weight_quantization": "int3"},
+            {"weight_quantization": "int4"},
+            {"weight_quantization": "int8", "packages": None},
             {"states": []},
             {"states": [{"name": "next_token", "shape": [1], "dtype": "int32"}]},
             {"states": [{"name": "x", "shape": [1, 2, -1, 8], "dtype": "float32"}]},

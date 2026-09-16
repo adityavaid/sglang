@@ -37,8 +37,18 @@ class CoreAIManifest:
     packages: dict[str, str]
     source_model: str | None
     source_revision: str | None
+    weight_quantization: str = "none"
 
     def __post_init__(self):
+        if self.weight_quantization not in ("none", "int4", "int8"):
+            raise ValueError("Unsupported Core AI weight quantization.")
+        if self.weight_quantization != "none" and (
+            not isinstance(self.packages, dict)
+            or self.packages.get("coreai-opt") != "0.2.1"
+        ):
+            raise ValueError(
+                "Quantized Core AI bundles require coreai-opt 0.2.1 provenance."
+            )
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError("Unsupported Core AI manifest schema.")
         if self.model_type != "qwen3":
