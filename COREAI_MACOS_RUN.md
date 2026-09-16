@@ -242,3 +242,36 @@ git apply /Users/aditshar/personal/sglang-core-ai/coreai-macos-diff.txt
 
 The machine-specific paths in section 1 must be adjusted for a different checkout
 or user account.
+
+## 6. macOS 27 validation on a second Mac (2026-09-16)
+
+The instructions above record an M4 Pro running macOS 26.6.2. A separate Apple
+M5 with 16 GB memory, macOS 27.0 (build 26A5425a), and Python 3.13.15
+completed the native serving steps after this branch was rebased onto
+`sgl-project/sglang` main at `e7f7447333`. Its `.venv-coreai` has Torch 2.13.0,
+`coreai-core` 1.0.0b2, `coreai-torch` 0.4.2, and `coreai-opt` 0.2.1. These
+results are specific to that environment; the macOS 26 version gate remains.
+
+The native-forward INT4 export used the section 2 command with
+`--output-dir artifacts/qwen3-coreai-native-int4-20260916`. Its `model.aimodel`
+was 544 MB. The section 4 server command, pointed at that bundle, reached
+readiness and answered `/v1/completions` with a continuation beginning
+` Paris.` The earlier floating-point adapter bundle was also served and
+answered ` Paris. The capital of Italy is Rome.`
+
+Using `sglang.benchmark.one_batch_server` with batch size 1, 128 input
+tokens, and 128 output tokens, one warmed run per configuration produced:
+
+| Backend and weight format | Latency (s) | Input tok/s | Output tok/s | TTFT (s) | ITL (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Core AI floating FP16 | 2.85 | 1536.72 | 46.34 | 0.08 | 21.58 |
+| MLX default BF16 | 1.58 | 563.54 | 94.35 | 0.23 | 10.60 |
+| Core AI native-forward INT4 | 2.07 | 2298.86 | 63.67 | 0.06 | 15.71 |
+| MLX `mlx_q4` | 0.55 | 1473.54 | 273.99 | 0.09 | 3.65 |
+
+MLX `mlx_q4` uses a group size of 64; the Core AI INT4 export uses block 32.
+Their outputs and weight formats differ, so the quantized rows measure two
+serving configurations rather than identical numerical models. These are
+single-run measurements, not a confidence interval. Native Core AI compilation
+and HTTP serving succeeded, but a GPU preference alone does not prove every
+operation ran on GPU or establish sustained memory behavior.
