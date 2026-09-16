@@ -438,6 +438,7 @@ class TestCoreAIResolutionPipeline(unittest.TestCase):
             scheduler = Scheduler.__new__(Scheduler)
             scheduler.server_args = args
             scheduler.ps = ParallelState.trivial()
+            scheduler.enable_overlap = False
             scheduler.nccl_port = port
             scheduler.model_config = ModelConfig.from_server_args(args)
             scheduler.spec_algorithm = SpeculativeAlgorithm.NONE
