@@ -73,9 +73,12 @@ def handle_gpu_memory_settings(server_args: Any):
         generate_decode_cuda_graph_batch_sizes,
         generate_prefill_cuda_graph_batch_sizes,
     )
+    from sglang.srt.hardware_backend.coreai.runtime import use_coreai
 
     cfg = resolving_view(server_args)
-    gpu_mem = get_device_memory_capacity(cfg.device)
+    # The Core AI artifact owns its memory; CPU is only scheduler bookkeeping.
+    # Linux CPU NUMA probing (lscpu) is not available on macOS.
+    gpu_mem = None if use_coreai() else get_device_memory_capacity(cfg.device)
     # A copy, so an earlier declaration keeps the value it recorded.
     cuda_graph_config = copy.deepcopy(cfg.cuda_graph_config)
     decode_cuda_graph_config = cuda_graph_config.decode

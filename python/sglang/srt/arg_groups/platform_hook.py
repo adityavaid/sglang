@@ -21,13 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 def handle_hardware_runtime_validation(server_args: Any):
-    # `server_args` is accepted, not read: every resolution-hook step takes
-    # it, uniformly, so `run_hook` never has to special-case an arity. The
-    # check below is intentionally independent of `server_args.device`:
-    # setting SGLANG_USE_MLX opts into the MLX backend and must fail
-    # immediately if the environment cannot honor that request. With the
-    # flag unset, use_mlx() remains lazy and does not import MLX.
-    use_mlx()
+    # Runtime selection is independent of server_args.device and must be
+    # validated before model path resolution or loading.
+    from sglang.srt.hardware_backend.coreai.runtime import use_coreai, validate_runtime
+
+    if use_coreai():
+        validate_runtime()
+        from sglang.srt.hardware_backend.coreai.serving import resolve_server_args
+
+        resolve_server_args(server_args)
+    else:
+        if resolving_view(server_args).coreai_artifact_path:
+            raise ValueError("--coreai-artifact-path requires SGLANG_USE_COREAI=1.")
+        use_mlx()
 
 
 def handle_npu_backends(server_args: Any):

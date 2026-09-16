@@ -112,6 +112,7 @@ POSITIONAL_FIELD_ORDER = (
     "gpu_id_step",
     "random_seed",
     "mlx_enable_sampling",
+    "coreai_artifact_path",
     "watchdog_timeout",
     "soft_watchdog_timeout",
     "sleep_on_idle",

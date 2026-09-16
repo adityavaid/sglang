@@ -786,6 +786,11 @@ class TokenizerControlMixin:
         obj: GetWeightsByNameReqInput,
         request: Optional[fastapi.Request] = None,
     ):
+        from sglang.srt.hardware_backend.coreai.runtime import (
+            reject_torch_model_control,
+        )
+
+        reject_torch_model_control("get_weights_by_name")
         self.auto_create_handle_loop()
         results = await self.get_weights_by_name_communicator(obj)
         all_parameters = [r.parameter for r in results]
@@ -799,6 +804,11 @@ class TokenizerControlMixin:
         obj: ReleaseMemoryOccupationReqInput,
         request: Optional[fastapi.Request] = None,
     ):
+        from sglang.srt.hardware_backend.coreai.runtime import (
+            reject_torch_model_control,
+        )
+
+        reject_torch_model_control("release_memory_occupation")
         self.auto_create_handle_loop()
         await self.release_memory_occupation_communicator(obj)
 
@@ -807,6 +817,11 @@ class TokenizerControlMixin:
         obj: ResumeMemoryOccupationReqInput,
         request: Optional[fastapi.Request] = None,
     ):
+        from sglang.srt.hardware_backend.coreai.runtime import (
+            reject_torch_model_control,
+        )
+
+        reject_torch_model_control("resume_memory_occupation")
         self.auto_create_handle_loop()
         await self.resume_memory_occupation_communicator(obj)
 
@@ -815,6 +830,14 @@ class TokenizerControlMixin:
         obj: CheckWeightsReqInput,
         request: Optional[fastapi.Request] = None,
     ) -> Tuple[bool, str, Optional[List[Dict]], Optional[str]]:
+        from sglang.srt.hardware_backend.coreai.runtime import (
+            reject_torch_model_control,
+        )
+
+        try:
+            reject_torch_model_control("check_weights")
+        except ValueError as exc:
+            return False, str(exc), None, None
         self.auto_create_handle_loop()
         results = await self.check_weights_communicator(obj)
         success, message = FanOutCommunicator.merge_results(results)
